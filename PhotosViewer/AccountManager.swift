@@ -64,22 +64,36 @@ class AccountManager : NSObject, WKNavigationDelegate {
         }
     }
     
+    
     override func awakeFromNib() {
         super.awakeFromNib()
         login()
     }
     
     @IBAction func login() {
+        guard state == .loggedOut else { return }
+        
         let viewController = self.accountViewController
         viewController?.title = "Log In"
         viewController?.navigationItem.hidesBackButton = true
         
         viewController?.loadViewIfNeeded()
         viewController?.webView?.navigationDelegate = self
-        loginNavigation = viewController?.load(url: loginURL)
+        currentNavigation = viewController?.load(url: loginURL)
+        
+        state = .loggingIn
     }
     
     @IBAction func logout() {
+        guard state == .loggedIn else { return }
+    
+        // Show a spinner because this load can take a while
+        // FIXME: Consider a custom view for the label and spinner so that the spinner can be centered on the label
+        let topViewController = self.navigationController?.topViewController
+        let spinner = UIActivityIndicatorView(style: .gray)
+        spinner.startAnimating()
+        topViewController?.navigationItem.rightBarButtonItem?.customView = spinner
+        
         let viewController = self.accountViewController
         viewController?.title = "Logged Out"
         viewController?.navigationItem.hidesBackButton = true
@@ -89,7 +103,9 @@ class AccountManager : NSObject, WKNavigationDelegate {
         
         viewController?.loadViewIfNeeded()
         viewController?.webView?.navigationDelegate = self
-        logoutNavigation = viewController?.load(url: logoutURL)
+        currentNavigation = viewController?.load(url: logoutURL)
+    
+        state = .loggingOut
     }
     
     @IBAction func showPhotos(account: Account) {
@@ -117,8 +133,14 @@ class AccountManager : NSObject, WKNavigationDelegate {
     private var _lock = os_unfair_lock_s()
     private var _account: Account? = nil
     
-    private var loginNavigation: WKNavigation?
-    private var logoutNavigation: WKNavigation?
+    private enum LoginState: Int {
+        case loggedOut = 0
+        case loggingIn = 1
+        case loggedIn = 2
+        case loggingOut = 3
+    }
+    private var state: LoginState = .loggedOut
+    private var currentNavigation: WKNavigation?
     
     private var loginURL: URL {
         let components = NSURLComponents()
@@ -157,25 +179,40 @@ class AccountManager : NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         var result: WKNavigationActionPolicy = .allow
         if let url = navigationAction.request.url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false), let host = components.host, host == "www.23andme.com" {
-            
-            if let fragment = components.fragment, let token = token(from: fragment) {
-                let account = Account(token: token)
-                currentAccount = account
-                result = .cancel
-                
-                DispatchQueue.main.async {
-                    self.showPhotos(account: account)
+            switch state {
+            case .loggingIn:
+                if let fragment = components.fragment, let token = token(from: fragment) {
+                    let account = Account(token: token)
+                    currentAccount = account
+                    result = .cancel
+                    state = .loggedIn
+                    
+                    DispatchQueue.main.async {
+                        self.showPhotos(account: account)
+                    }
                 }
+            case .loggingOut:
+                break
+            case .loggedIn:
+                break
+            case .loggedOut:
+                break
             }
         }
         decisionHandler(result)
     }
     
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        currentNavigation = navigation
+    }
+    
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if navigation == logoutNavigation {
+        if currentNavigation == navigation && state == .loggingOut {
             currentAccount = nil
+            state = .loggedOut
             DispatchQueue.main.async {
                 self.navigationController?.popToRootViewController(animated: true)
+                
             }
         }
     }

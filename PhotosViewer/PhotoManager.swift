@@ -95,7 +95,7 @@ class PhotoManager : NSObject, URLSessionTaskDelegate {
     private var _photos: [Photo] = []
     private var _count = 0
     
-    class Photo : Codable {
+    class Photo : NSObject, Codable {
         enum ImageSize : Int {
             case thumbnail = 150
             case small = 320
